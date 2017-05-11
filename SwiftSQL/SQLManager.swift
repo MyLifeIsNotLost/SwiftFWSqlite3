@@ -1,0 +1,170 @@
+//
+//  SQLManager.swift
+//  SQLITE
+//
+
+//
+
+
+//#define SQLITE_ERROR        1   /* SQL error or missing database */
+//#define SQLITE_INTERNAL     2   /* Internal logic error in SQLite */
+//#define SQLITE_PERM         3   /* Access permission denied */
+//#define SQLITE_ABORT        4   /* Callback routine requested an abort */
+//#define SQLITE_BUSY         5   /* The database file is locked */
+//#define SQLITE_LOCKED       6   /* A table in the database is locked */
+//#define SQLITE_NOMEM        7   /* A malloc() failed */
+//#define SQLITE_READONLY     8   /* Attempt to write a readonly database */
+//#define SQLITE_INTERRUPT    9   /* Operation terminated by sqlite3_interrupt()*/
+//#define SQLITE_IOERR       10   /* Some kind of disk I/O error occurred */
+//#define SQLITE_CORRUPT     11   /* The database disk image is malformed */
+//#define SQLITE_NOTFOUND    12   /* Unknown opcode in sqlite3_file_control() */
+//#define SQLITE_FULL        13   /* Insertion failed because database is full */
+//#define SQLITE_CANTOPEN    14   /* Unable to open the database file */
+//#define SQLITE_PROTOCOL    15   /* Database lock protocol error */
+//#define SQLITE_EMPTY       16   /* Database is empty */
+//#define SQLITE_SCHEMA      17   /* The database schema changed */
+//#define SQLITE_TOOBIG      18   /* String or BLOB exceeds size limit */
+//#define SQLITE_CONSTRAINT  19   /* Abort due to constraint violation */
+//#define SQLITE_MISMATCH    20   /* Data type mismatch */
+//#define SQLITE_MISUSE      21   /* Library used incorrectly */
+//#define SQLITE_NOLFS       22   /* Uses OS features not supported on host */
+//#define SQLITE_AUTH        23   /* Authorization denied */
+//#define SQLITE_FORMAT      24   /* Auxiliary database format error */
+//#define SQLITE_RANGE       25   /* 2nd parameter to sqlite3_bind out of range */
+//#define SQLITE_NOTADB      26   /* File opened that is not a database file */
+//#define SQLITE_NOTICE      27   /* Notifications from sqlite3_log() */
+//#define SQLITE_WARNING     28   /* Warnings from sqlite3_log() */
+//#define SQLITE_ROW         100  /* sqlite3_step() has another row ready */
+//#define SQLITE_DONE        101  /* sqlite3_step() has finished executing */
+
+///open -> 增删改查 -> close
+
+import UIKit
+
+class SQLiteManager: NSObject {
+    
+    //MARK: - 变量
+    //创建类的静态实例变量即为单例对象 let-是线程安全的
+    static let shareInstance = SQLiteManager()
+    
+    //定义数据库变量
+    fileprivate var db : OpaquePointer?
+    fileprivate var cPath : [CChar]?
+    fileprivate var value : Any?
+    
+    func checkDBPath(_ path : String){
+        cPath = path.cString(using: .utf8)
+    }
+    
+    //MARK: - 对象方法
+    //打开数据库
+    func open() -> Bool {
+        //第一个参数:数据库文件路径  第二个参数:数据库对象
+        
+        if sqlite3_open(cPath, &db) != SQLITE_OK {
+            print("error opening! %d",sqlite3_open(cPath, &db)) ;
+
+            return false
+        } else  {  return true }
+    }
+    
+    /// 关闭数据库
+    func close() {
+        guard let _ = db else { return }
+        sqlite3_close_v2(db)
+    }
+
+    /// CREATE ,INSERT ,DELETE ,UPDATE
+    ///
+    /// - Parameter sql: sql语句
+    /// - Returns: 执行结果 bool
+    func executeUpdate(sql : String) -> Bool {
+        // 1.将sql语句转成c语言字符串
+        let cSql = sql.cString(using: .utf8)
+        //错误信息
+        let error : UnsafeMutablePointer<UnsafeMutablePointer<Int8>?>? = nil
+        if sqlite3_exec(db, cSql, nil, nil, error) == SQLITE_OK {
+            return true
+        }else{
+            print("sql语句错误: \(String(describing: error))")
+            return false
+        }
+    }
+    
+
+    /// CREATE ,INSERT ,DELETE ,UPDATE
+    ///
+    /// - Parameter sql: sql语句
+    /// - Returns: 查询结果 [[String : AnyObject]]
+    func executeQuery(sql : String) -> [[String : AnyObject]] {
+        //定义游标对象
+        var stmt : OpaquePointer?
+        //将需要查询的SQL语句转化为C语言
+        if sql.lengthOfBytes(using: String.Encoding.utf8) > 0 {
+            let cQuerySQL = (sql.cString(using: String.Encoding.utf8))
+            
+            /// sqlite3_step 之前需要调用此函数
+            ///
+            /// - Parameter db: 数据库对象
+            /// - Parameter zSql: sql语句
+            /// - Parameter nByte: sql语句长度 -1
+            /// - Parameter ppStmt: 句柄
+            /// - Returns: Int
+            
+            if sqlite3_prepare_v2(db, cQuerySQL, -1, &stmt, nil) == SQLITE_OK {
+                //准备好之后进行解析
+                var queryDataArrM = [[String : AnyObject]]()
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    //1.获取 解析到的列(字段个数)
+                    let columnCount = sqlite3_column_count(stmt)
+                    //2.遍历某行数据
+                    var dict = [String : AnyObject]()
+                    for i in 0..<columnCount {
+                        // 取出i位置列的字段名,作为字典的键key
+                        let cKey = sqlite3_column_name(stmt, i)
+                        let key : String = String(validatingUTF8: cKey!)!
+                        
+                        //取出i位置存储的值,作为字典的值value
+                        value = nil
+                        switch sqlite3_column_type(stmt, i) {
+                        case SQLITE_INTEGER:
+                            value = sqlite3_column_int(stmt, i)
+                            break
+                        case SQLITE_FLOAT:
+                            value = sqlite3_column_double(stmt, i)
+                            break
+                        case SQLITE_TEXT:
+                            if let cValue = sqlite3_column_text(stmt, i){
+                                value =  String(cString:cValue)
+                            }
+                            break
+                        case SQLITE_BLOB:
+                            if let blob = sqlite3_column_blob(stmt, i) {
+                                let bytes = sqlite3_column_bytes(stmt, i)
+                                let data = Data.init(bytes: blob, count: Int(bytes))
+                                value = data
+                            }
+                            break
+                        default:
+                            value = nil
+                            break
+                        }
+                        dict[key] = value as AnyObject
+                    }
+                    queryDataArrM.append(dict)
+                }
+                return queryDataArrM
+            }
+        }
+        return [[String : AnyObject]]()
+    }
+    
+    func isExistTable(_ tableName : String) -> Bool{
+        if sqlite3_open(cPath, &db) != SQLITE_OK {
+            
+        }else
+        {
+        }
+        return true
+    }
+}
